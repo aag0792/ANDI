@@ -7,7 +7,7 @@
                            nombre de la compañía). Míralo en SSMS.
      3. Columnas de la tabla CLIENTE -> verifica con:
            SELECT TOP 5 * FROM [EMPRESA].CLIENTE;
-     4. La contraseña del login.
+     4. Define la contraseña real únicamente al ejecutar/configurar localmente; nunca la guardes en Git.
 
    RECOMENDACIÓN: ejecútalo primero en una COPIA restaurada de la base,
    no en producción.
@@ -19,7 +19,7 @@ GO
 -- 1) Login a nivel de servidor (solo autenticación SQL, sin permisos extra)
 IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = N'andi_gateway')
     CREATE LOGIN [andi_gateway]
-        WITH PASSWORD = N'eqsftadmin02..',
+        WITH PASSWORD = N'CAMBIAR_POR_CONTRASENA_SEGURA_LOCAL',
              CHECK_POLICY = ON,
              DEFAULT_DATABASE = [SOFTLAND];
 GO

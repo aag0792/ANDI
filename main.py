@@ -262,7 +262,7 @@ class BearerAuth(BaseHTTPMiddleware):
 
     async def dispatch(self, request, call_next):
         path = request.url.path
-        public_paths = {"/health", "/", "/chat", "/assistant/chat", "/condiciones-generales", "/terms"}
+        public_paths = {"/health", "/", "/condiciones-generales", "/terms"}
         if path in public_paths or path.startswith("/assets"):
             return await call_next(request)
         header = request.headers.get("authorization", "")

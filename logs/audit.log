@@ -1,2 +1,0 @@
-{"ts": "2026-09-30T17:06:33", "tool": "buscar_cliente", "params": {"termino": "ana"}, "rows": 4, "ok": true, "error": null}
-{"ts": "2026-09-30T17:07:58", "tool": "buscar_cliente", "params": {"termino": "agribio"}, "rows": 1, "ok": true, "error": null}

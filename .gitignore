@@ -16,3 +16,9 @@ Thumbs.db
 .coverage
 htmlcov/
 *.sqlite3
+exports/
+logs/
+tools/gh/
+ChatGPTInstaller.dmg
+*.pdf
+*.zip

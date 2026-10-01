@@ -64,3 +64,29 @@ Invoke-RestMethod -Method POST -Uri http://127.0.0.1:8000/assistant/chat -Header
   autenticación compatible con conectores (OAuth), no solo un token fijo.
 - Módulo de aprobación (`/approval`) antes de cualquier herramienta que escriba o envíe.
 - Ejecutar como servicio de Windows (NSSM o similar) con cuenta sin privilegios.
+
+
+## Modelo de permisos de acciones
+ANDI clasifica las herramientas en una política central:
+- `read`: consultas sin cambios, por ejemplo clientes e historial.
+- `prepare`: crea artefactos internos o borradores, por ejemplo estimaciones, cronogramas, PDFs y borradores de email.
+- `external_action`: reservado para futuras acciones que hablen por Andrés con terceros. Requieren aprobación explícita y no están expuestas al LLM en v0.2.
+- cualquier herramienta desconocida: `forbidden`.
+
+El LLM decide qué capacidad necesita, pero `action_policy.py` decide si puede ejecutarse. Esta separación se debe conservar al agregar Exchange, calendario, OneDrive u otros conectores.
+
+## Pruebas
+```powershell
+cd C:\ANDI
+.\.venv\Scripts\Activate.ps1
+pip install pytest
+pytest -q
+```
+
+Casos recomendados para smoke test de conversación:
+- `Buscame el cliente Datasys`
+- `Mostrame las últimas 5 cotizaciones`
+- `Prepará un cronograma para Portal ABC...`
+- `Prepará una cotización para Cliente X...`
+- `Prepará el correo de la cotización` (debe producir borrador, nunca enviarlo)
+- `Ejecutá este SQL...` (debe rechazarse)

@@ -109,7 +109,7 @@ TOOLS = [
                 "additionalProperties": False,
             },
         },
-    },,
+    },
     {
         "type": "function",
         "function": {

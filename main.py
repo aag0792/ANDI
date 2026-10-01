@@ -178,9 +178,12 @@ async def generar_cotizacion(
     localization: bool = False,
     discount_percent: float = 0.0,
     margin_percent: float = 0.2,
-    output_path: str = "exports/propuesta.pdf",
+    output_path: str | None = None,
 ) -> dict:
-    """Genera la estimación, cronograma y PDF de la propuesta con costo final."""
+    """Prepara internamente estimación, cronograma y PDF; no envía la cotización."""
+    if output_path is None:
+        safe_name = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in project_name.lower()).strip("_") or "propuesta"
+        output_path = f"exports/{safe_name}.pdf"
     estimate = estimate_project(
         project_name=project_name,
         client_name=client_name,
@@ -550,8 +553,11 @@ async def assistant_chat(request):
         handlers = {
             "buscar_cliente": buscar_cliente,
             "crear_estimacion_proyecto": crear_estimacion_proyecto,
+            "crear_cronograma_proyecto": crear_cronograma_proyecto,
+            "generar_cotizacion": generar_cotizacion,
             "resumir_reunion": resumir_reunion,
             "listar_cotizaciones": listar_cotizaciones,
+            "obtener_cotizacion": obtener_cotizacion,
             "preparar_email_cotizacion": generar_email_cotizacion,
         }
         result = await run_agent(message, handlers)

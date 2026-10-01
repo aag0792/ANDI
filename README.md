@@ -1,4 +1,4 @@
-# ANDI Gateway v0.1 (solo lectura)
+# ANDI Gateway v0.2
 
 ## 1. Base de datos (en una COPIA de Softland primero)
 1. Abre `sql/01_usuario_y_procedimiento.sql` en SSMS.
@@ -32,7 +32,7 @@ Prueba: http://127.0.0.1:8000/health
 
 > El proyecto acepta tanto `.env` como `conexion.env`, pero el arranque real ocurre desde `main.py` en la raíz del repositorio.
 
-## 5. Probar la herramienta (sin IA todavía)
+## 5. Probar herramientas MCP
 ```powershell
 npx @modelcontextprotocol/inspector
 ```
@@ -42,6 +42,18 @@ Header: `Authorization: Bearer <tu GATEWAY_TOKEN>` · Tools > buscar_cliente.
 O con Claude Code (desde la misma máquina):
 ```powershell
 claude mcp add --transport http andi http://127.0.0.1:8000/mcp --header "Authorization: Bearer <TOKEN>"
+```
+
+## 6. Configurar ANDI v0.2
+En tu archivo local `.env`, configura `OPENAI_API_KEY`, `OPENAI_MODEL` y `OPENAI_BASE_URL`. No subas `.env` al repositorio.
+
+El endpoint `POST /assistant/chat` usa el LLM únicamente como orquestador. El modelo puede solicitar solo herramientas incluidas en la allowlist de `llm_orchestrator.py`; no tiene SQL libre ni una herramienta para enviar correos.
+
+Ejemplo autenticado:
+```powershell
+$headers = @{ Authorization = "Bearer <tu GATEWAY_TOKEN>" }
+$body = @{ message = "Buscame el cliente Datasys" } | ConvertTo-Json
+Invoke-RestMethod -Method POST -Uri http://127.0.0.1:8000/assistant/chat -Headers $headers -ContentType "application/json" -Body $body
 ```
 
 ## Revisar la auditoría

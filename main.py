@@ -1,4 +1,4 @@
-"""ANDI Gateway v0.1 - servidor MCP de solo lectura.
+"""ANDI Gateway v0.2 - Gateway seguro con orquestación LLM y herramientas permitidas.
 
 Herramientas expuestas:
   - buscar_cliente(termino)  -> andi.sp_buscar_cliente
@@ -13,7 +13,6 @@ import hmac
 from datetime import datetime
 from pathlib import Path
 
-import requests
 import uvicorn
 from mcp.server.fastmcp import FastMCP
 from starlette.applications import Starlette
@@ -37,7 +36,6 @@ try:
         generate_pdf_proposal,
         generate_quote,
         list_quote_history,
-        parse_user_request,
         save_quote_history,
         summarize_meeting,
     )
@@ -50,7 +48,6 @@ except ImportError:  # Ejecutado como `python main.py`
         generate_pdf_proposal,
         generate_quote,
         list_quote_history,
-        parse_user_request,
         save_quote_history,
         summarize_meeting,
     )
@@ -483,50 +480,6 @@ CHAT_HTML = """
   </body>
 </html>
 """
-
-
-def call_openai_for_response(message: str, context: dict | None = None) -> str | None:
-    """Optional: reescribe la respuesta final con OpenAI si hay API key configurada."""
-    if not config.OPENAI_API_KEY:
-        return None
-    try:
-        payload = {
-            "model": config.OPENAI_MODEL,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "Eres ANDI, un asistente comercial para cotizaciones, cronogramas y propuestas. "
-                        "Responde de manera amigable, clara y profesional en español. "
-                        "Mantén la información real del contexto y no inventes datos."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": (
-                        f"Usuario: {message}\n\n"
-                        f"Contexto interno: {context or {}}\n\n"
-                        "Quiero que la respuesta final sea natural, breve y útil para un cliente o vendedor."
-                    ),
-                },
-            ],
-            "temperature": 0.32,
-            "max_tokens": 300,
-        }
-        response = requests.post(
-            f"{config.OPENAI_BASE_URL}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {config.OPENAI_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-            timeout=30,
-        )
-        response.raise_for_status()
-        data = response.json()
-        return (data.get("choices") or [{}])[0].get("message", {}).get("content", "").strip() or None
-    except Exception:
-        return None
 
 
 def format_assistant_message(payload: dict) -> str:

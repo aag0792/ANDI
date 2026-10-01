@@ -1,0 +1,6 @@
+mcp>=1.9,<2
+uvicorn>=0.30
+pyodbc>=5.1
+python-dotenv>=1.0
+reportlab>=4.0
+requests>=2.32

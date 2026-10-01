@@ -11,6 +11,7 @@ from typing import Any, Awaitable, Callable
 import requests
 
 import config
+from action_policy import decision
 
 ToolHandler = Callable[..., Awaitable[dict[str, Any]]]
 
@@ -23,6 +24,9 @@ Reglas:
 - Si hay varias coincidencias de cliente, muéstralas y pide selección; no elijas arbitrariamente.
 - Si faltan datos esenciales para una estimación/cotización, pregunta antes de crearla.
 - Una estimación es preliminar; no la presentes como compromiso comercial confirmado.
+- Generar una cotización significa preparar un borrador/PDF interno; no significa enviarlo ni aprobarlo comercialmente.
+- Para cronogramas usa crear_cronograma_proyecto; para una cotización preparada usa generar_cotizacion.
+- Para recuperar una cotización concreta usa obtener_cotizacion.
 - Puedes preparar borradores de correo, pero nunca enviar comunicaciones a clientes o compañeros.
 - No existe una herramienta de SQL libre. No solicites ni construyas SQL para ejecución.
 - Responde en español claro y natural.
@@ -105,7 +109,49 @@ TOOLS = [
                 "additionalProperties": False,
             },
         },
+    },,
+    {
+        "type": "function",
+        "function": {
+            "name": "crear_cronograma_proyecto",
+            "description": "Prepara un cronograma interno a partir del alcance conocido.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project_name": {"type": "string"}, "client_name": {"type": "string"},
+                    "description": {"type": "string"}, "complexity": {"type": "string", "enum": ["low","medium","high"]},
+                    "modules": {"type": "array", "items": {"type": "string"}}, "integrations": {"type": "integer", "minimum": 0},
+                    "users": {"type": "integer", "minimum": 1}, "localization": {"type": "boolean"}, "start_date": {"type": "string"}
+                },
+                "required": ["project_name","client_name","description"], "additionalProperties": False
+            },
+        },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "generar_cotizacion",
+            "description": "Prepara internamente una cotización y PDF. NO envía nada a terceros.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project_name": {"type": "string"}, "client_name": {"type": "string"}, "description": {"type": "string"},
+                    "complexity": {"type": "string", "enum": ["low","medium","high"]}, "modules": {"type": "array", "items": {"type": "string"}},
+                    "integrations": {"type": "integer", "minimum": 0}, "users": {"type": "integer", "minimum": 1},
+                    "localization": {"type": "boolean"}, "discount_percent": {"type": "number"}, "margin_percent": {"type": "number"}
+                },
+                "required": ["project_name","client_name","description"], "additionalProperties": False
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "obtener_cotizacion",
+            "description": "Recupera una cotización existente por su identificador.",
+            "parameters": {"type": "object", "properties": {"cotizacion_id": {"type": "string"}}, "required": ["cotizacion_id"], "additionalProperties": False},
+        },
+    }
 ]
 
 
@@ -149,8 +195,11 @@ async def run_agent(message: str, handlers: dict[str, ToolHandler]) -> dict[str,
             fn = call.get("function") or {}
             name = fn.get("name")
             handler = handlers.get(name)
-            if handler is None:
-                result = {"error": f"Herramienta no permitida: {name}"}
+            policy = decision(name)
+            if not policy["allowed"]:
+                result = {"error": policy["reason"], "policy": policy}
+            elif handler is None:
+                result = {"error": f"Herramienta no implementada: {name}"}
             else:
                 try:
                     args = json.loads(fn.get("arguments") or "{}")
@@ -160,7 +209,7 @@ async def run_agent(message: str, handlers: dict[str, ToolHandler]) -> dict[str,
                 except Exception as exc:
                     result = {"error": f"No se pudo ejecutar {name}: {type(exc).__name__}"}
 
-            trace.append({"tool": name, "ok": "error" not in result})
+            trace.append({"tool": name, "classification": policy["classification"], "ok": "error" not in result})
             messages.append({
                 "role": "tool",
                 "tool_call_id": call.get("id"),

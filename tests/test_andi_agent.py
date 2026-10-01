@@ -5,38 +5,8 @@ from andi_agent import (
     build_project_schedule,
     estimate_project,
     generate_pdf_proposal,
-    parse_user_request,
 )
 from main import format_assistant_message
-
-
-def test_parse_user_request_detects_proposal_intent():
-    request = parse_user_request(
-        "Necesito una cotización para Agribio para un portal de clientes con login, dashboard y cotizaciones"
-    )
-
-    assert request["intent"] == "proposal"
-    assert request["client_name"] == "Agribio"
-    assert request["project_name"]
-    assert "portal" in request["description"].lower()
-
-
-def test_parse_user_request_detects_final_client_name():
-    request = parse_user_request("Preparate una cotización para Datasys")
-
-    assert request["intent"] == "proposal"
-    assert request["client_name"] == "Datasys"
-    assert request["project_name"]
-
-
-def test_parse_user_request_detects_client_before_follow_up_clause():
-    request = parse_user_request(
-        "Preparame una cotizacion para DAtasys y el me busque los clientes con nombre o alias"
-    )
-
-    assert request["intent"] == "proposal"
-    assert request["client_name"] == "DAtasys"
-    assert request["project_name"]
 
 
 def test_estimate_project_returns_structured_data():

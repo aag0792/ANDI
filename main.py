@@ -1,4 +1,4 @@
-"""ANDI Gateway v0.1 - servidor MCP de solo lectura.
+"""ANDI Gateway v0.2 - Gateway seguro con orquestación LLM y herramientas permitidas.
 
 Herramientas expuestas:
   - buscar_cliente(termino)  -> andi.sp_buscar_cliente
@@ -13,7 +13,6 @@ import hmac
 from datetime import datetime
 from pathlib import Path
 
-import requests
 import uvicorn
 from mcp.server.fastmcp import FastMCP
 from starlette.applications import Starlette
@@ -37,7 +36,6 @@ try:
         generate_pdf_proposal,
         generate_quote,
         list_quote_history,
-        parse_user_request,
         save_quote_history,
         summarize_meeting,
     )
@@ -50,12 +48,11 @@ except ImportError:  # Ejecutado como `python main.py`
         generate_pdf_proposal,
         generate_quote,
         list_quote_history,
-        parse_user_request,
         save_quote_history,
         summarize_meeting,
     )
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 mcp = FastMCP("ANDI Gateway", stateless_http=True, json_response=True)
 
@@ -181,9 +178,12 @@ async def generar_cotizacion(
     localization: bool = False,
     discount_percent: float = 0.0,
     margin_percent: float = 0.2,
-    output_path: str = "exports/propuesta.pdf",
+    output_path: str | None = None,
 ) -> dict:
-    """Genera la estimación, cronograma y PDF de la propuesta con costo final."""
+    """Prepara internamente estimación, cronograma y PDF; no envía la cotización."""
+    if output_path is None:
+        safe_name = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in project_name.lower()).strip("_") or "propuesta"
+        output_path = f"exports/{safe_name}.pdf"
     estimate = estimate_project(
         project_name=project_name,
         client_name=client_name,
@@ -485,50 +485,6 @@ CHAT_HTML = """
 """
 
 
-def call_openai_for_response(message: str, context: dict | None = None) -> str | None:
-    """Optional: reescribe la respuesta final con OpenAI si hay API key configurada."""
-    if not config.OPENAI_API_KEY:
-        return None
-    try:
-        payload = {
-            "model": config.OPENAI_MODEL,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "Eres ANDI, un asistente comercial para cotizaciones, cronogramas y propuestas. "
-                        "Responde de manera amigable, clara y profesional en español. "
-                        "Mantén la información real del contexto y no inventes datos."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": (
-                        f"Usuario: {message}\n\n"
-                        f"Contexto interno: {context or {}}\n\n"
-                        "Quiero que la respuesta final sea natural, breve y útil para un cliente o vendedor."
-                    ),
-                },
-            ],
-            "temperature": 0.32,
-            "max_tokens": 300,
-        }
-        response = requests.post(
-            f"{config.OPENAI_BASE_URL}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {config.OPENAI_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-            timeout=30,
-        )
-        response.raise_for_status()
-        data = response.json()
-        return (data.get("choices") or [{}])[0].get("message", {}).get("content", "").strip() or None
-    except Exception:
-        return None
-
-
 def format_assistant_message(payload: dict) -> str:
     intent = (payload.get("intent") or "general").lower()
     if intent == "general":
@@ -573,6 +529,7 @@ async def chat_home(_request):
 
 
 async def assistant_chat(request):
+    """Chat endpoint: the LLM orchestrates only explicitly allow-listed Gateway tools."""
     try:
         payload = await request.json()
     except Exception:
@@ -581,102 +538,36 @@ async def assistant_chat(request):
     message = (payload.get("message") or payload.get("text") or "").strip()
     if not message:
         return JSONResponse({"error": "Se requiere un mensaje."}, status_code=400)
-
-    parsed = parse_user_request(message)
-    intent = parsed["intent"]
-
-    if intent == "general":
-        response = {
-            "intent": "general",
-            "message": "Puedo ayudarte con cotizaciones, estimaciones, cronogramas, calendario, PDF y resúmenes de reuniones.",
-            "parsed": parsed,
-        }
-        if config.OPENAI_API_KEY:
-            polished = call_openai_for_response(message, response)
-            if polished:
-                response["message"] = polished
-        return JSONResponse(response)
-
-    if intent == "proposal":
-        client_term = parsed.get("client_name") or "cliente"
-        if client_term and client_term.lower() not in {"cliente", "nuevo"}:
-            try:
-                matches = await asyncio.to_thread(db.call_procedure, "andi.sp_buscar_cliente", client_term)
-            except Exception:
-                matches = []
-            if len(matches) > 1:
-                response = {
-                    "intent": "client_selection",
-                    "requires_client_selection": True,
-                    "parsed": parsed,
-                    "clientes": matches,
-                    "message": build_client_selection_message(client_term, matches),
-                }
-                return JSONResponse(response)
-
-    estimate = estimate_project(
-        project_name=parsed["project_name"],
-        client_name=parsed["client_name"],
-        description=parsed["description"],
-        complexity=parsed["complexity"],
-        modules=parsed["modules"],
-        integrations=parsed["integrations"],
-        users=parsed["users"],
-        localization=parsed["localization"],
-    )
-
-    if intent == "proposal":
-        proposal = generate_quote(
-            project_name=parsed["project_name"],
-            client_name=parsed["client_name"],
-            estimate=estimate,
-            discount_percent=0.0,
-            margin_percent=0.2,
+    if not config.OPENAI_API_KEY:
+        return JSONResponse(
+            {"error": "ANDI v0.2 requiere OPENAI_API_KEY para interpretar lenguaje natural."},
+            status_code=503,
         )
-        pdf_path = f"exports/{parsed['project_name'].lower().replace(' ', '_')}.pdf"
-        pdf = generate_pdf_proposal(estimate, output_path=pdf_path)
-        proposal["pdf"] = pdf
-        schedule = build_project_schedule(estimate)
-        proposal["schedule"] = schedule
-        record = save_quote_history({
-            "id": f"QT-{int(__import__('time').time())}",
-            "project_name": parsed["project_name"],
-            "client_name": parsed["client_name"],
-            "final_cost": proposal.get("final_cost"),
-            "created_at": __import__('datetime').datetime.utcnow().isoformat(timespec="seconds") + "Z",
-            "pdf_path": pdf_path,
-        })
-        response = {"intent": "proposal", "parsed": parsed, "estimate": estimate, "proposal": proposal, "schedule": schedule, "quote_id": record["id"], "pdf_path": pdf_path}
-        response["message"] = format_assistant_message(response)
-        if config.OPENAI_API_KEY:
-            polished = call_openai_for_response(message, response)
-            if polished:
-                response["message"] = polished
-        return JSONResponse(response)
 
-    if intent == "schedule":
-        schedule = build_project_schedule(estimate)
-        response = {"intent": "schedule", "parsed": parsed, "estimate": estimate, "schedule": schedule}
-        response["message"] = format_assistant_message(response)
-        if config.OPENAI_API_KEY:
-            polished = call_openai_for_response(message, response)
-            if polished:
-                response["message"] = polished
-        return JSONResponse(response)
+    try:
+        try:
+            from .llm_orchestrator import run_agent
+        except ImportError:
+            from llm_orchestrator import run_agent
 
-    if intent == "summary":
-        summary = summarize_meeting(message)
-        response = {"intent": "summary", "parsed": parsed, "summary": summary}
-        response["message"] = format_assistant_message(response)
-        if config.OPENAI_API_KEY:
-            polished = call_openai_for_response(message, response)
-            if polished:
-                response["message"] = polished
-        return JSONResponse(response)
-
-    response = {"intent": intent, "parsed": parsed, "estimate": estimate}
-    response["message"] = format_assistant_message(response)
-    return JSONResponse(response)
+        handlers = {
+            "buscar_cliente": buscar_cliente,
+            "crear_estimacion_proyecto": crear_estimacion_proyecto,
+            "crear_cronograma_proyecto": crear_cronograma_proyecto,
+            "generar_cotizacion": generar_cotizacion,
+            "resumir_reunion": resumir_reunion,
+            "listar_cotizaciones": listar_cotizaciones,
+            "obtener_cotizacion": obtener_cotizacion,
+            "preparar_email_cotizacion": generar_email_cotizacion,
+        }
+        result = await run_agent(message, handlers)
+        return JSONResponse(result)
+    except Exception as exc:
+        db.audit("assistant_chat", {"message_length": len(message)}, None, False, type(exc).__name__)
+        return JSONResponse(
+            {"error": "No pude procesar la solicitud con el orquestador de ANDI."},
+            status_code=502,
+        )
 
 
 mcp_app = mcp.streamable_http_app()  # debe crearse antes de usar mcp.session_manager

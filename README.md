@@ -1,4 +1,4 @@
-# ANDI Gateway v0.1 (solo lectura)
+# ANDI Gateway v0.2
 
 ## 1. Base de datos (en una COPIA de Softland primero)
 1. Abre `sql/01_usuario_y_procedimiento.sql` en SSMS.
@@ -32,7 +32,7 @@ Prueba: http://127.0.0.1:8000/health
 
 > El proyecto acepta tanto `.env` como `conexion.env`, pero el arranque real ocurre desde `main.py` en la raíz del repositorio.
 
-## 5. Probar la herramienta (sin IA todavía)
+## 5. Probar herramientas MCP
 ```powershell
 npx @modelcontextprotocol/inspector
 ```
@@ -44,6 +44,18 @@ O con Claude Code (desde la misma máquina):
 claude mcp add --transport http andi http://127.0.0.1:8000/mcp --header "Authorization: Bearer <TOKEN>"
 ```
 
+## 6. Configurar ANDI v0.2
+En tu archivo local `.env`, configura `OPENAI_API_KEY`, `OPENAI_MODEL` y `OPENAI_BASE_URL`. No subas `.env` al repositorio.
+
+El endpoint `POST /assistant/chat` usa el LLM únicamente como orquestador. El modelo puede solicitar solo herramientas incluidas en la allowlist de `llm_orchestrator.py`; no tiene SQL libre ni una herramienta para enviar correos.
+
+Ejemplo autenticado:
+```powershell
+$headers = @{ Authorization = "Bearer <tu GATEWAY_TOKEN>" }
+$body = @{ message = "Buscame el cliente Datasys" } | ConvertTo-Json
+Invoke-RestMethod -Method POST -Uri http://127.0.0.1:8000/assistant/chat -Headers $headers -ContentType "application/json" -Body $body
+```
+
 ## Revisar la auditoría
 `C:\ANDI\logs\audit.log` (una línea JSON por consulta; no guarda los datos devueltos).
 
@@ -52,3 +64,29 @@ claude mcp add --transport http andi http://127.0.0.1:8000/mcp --header "Authori
   autenticación compatible con conectores (OAuth), no solo un token fijo.
 - Módulo de aprobación (`/approval`) antes de cualquier herramienta que escriba o envíe.
 - Ejecutar como servicio de Windows (NSSM o similar) con cuenta sin privilegios.
+
+
+## Modelo de permisos de acciones
+ANDI clasifica las herramientas en una política central:
+- `read`: consultas sin cambios, por ejemplo clientes e historial.
+- `prepare`: crea artefactos internos o borradores, por ejemplo estimaciones, cronogramas, PDFs y borradores de email.
+- `external_action`: reservado para futuras acciones que hablen por Andrés con terceros. Requieren aprobación explícita y no están expuestas al LLM en v0.2.
+- cualquier herramienta desconocida: `forbidden`.
+
+El LLM decide qué capacidad necesita, pero `action_policy.py` decide si puede ejecutarse. Esta separación se debe conservar al agregar Exchange, calendario, OneDrive u otros conectores.
+
+## Pruebas
+```powershell
+cd C:\ANDI
+.\.venv\Scripts\Activate.ps1
+pip install pytest
+pytest -q
+```
+
+Casos recomendados para smoke test de conversación:
+- `Buscame el cliente Datasys`
+- `Mostrame las últimas 5 cotizaciones`
+- `Prepará un cronograma para Portal ABC...`
+- `Prepará una cotización para Cliente X...`
+- `Prepará el correo de la cotización` (debe producir borrador, nunca enviarlo)
+- `Ejecutá este SQL...` (debe rechazarse)

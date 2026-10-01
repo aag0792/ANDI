@@ -2,7 +2,7 @@
 
 ## 1. Base de datos (en una COPIA de Softland primero)
 1. Abre `sql/01_usuario_y_procedimiento.sql` en SSMS.
-2. Ajusta `[SOFTLAND_DB]`, `[EMPRESA]`, las columnas de `CLIENTE` y la clave.
+2. Ajusta `[SOFTLAND_DB]`, `[EMPRESA]` y las columnas de `CLIENTE`. La contraseña real debe existir únicamente en `.env` local y nunca en Git.
 3. Ejecútalo y corre las dos pruebas del final (la segunda DEBE fallar).
 
 ## 2. Instalar el driver ODBC
@@ -28,7 +28,7 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"   # para GATEWAY_TO
 cd C:\ANDI
 \.\.venv\Scripts\python.exe .\main.py
 ```
-Prueba: http://127.0.0.1:1992/health
+Prueba: http://127.0.0.1:8000/health
 
 > El proyecto acepta tanto `.env` como `conexion.env`, pero el arranque real ocurre desde `main.py` en la raíz del repositorio.
 

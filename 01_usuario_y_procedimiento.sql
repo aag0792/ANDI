@@ -69,6 +69,74 @@ GO
 GRANT EXECUTE ON OBJECT::[andi].[sp_buscar_cliente] TO [andi_gateway];
 GO
 
+
+-- 6) Cliente 360: ficha, cuentas por cobrar e historial de compras
+CREATE OR ALTER PROCEDURE [andi].[sp_cliente_360]
+    @cliente NVARCHAR(40)
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    IF @cliente IS NULL OR LEN(LTRIM(RTRIM(@cliente))) = 0
+        RETURN;
+
+    DECLARE @codigo NVARCHAR(40) = LTRIM(RTRIM(@cliente));
+
+    -- Result set 1: ficha completa del cliente
+    SELECT TOP (1) A.*
+    FROM ASISTENTE.CLIENTE AS A
+    WHERE A.CLIENTE = @codigo;
+
+    -- Result set 2: cuentas por cobrar abiertas
+    SELECT
+        A.CLIENTE,
+        A.NOMBRE,
+        A.CONDICION_PAGO AS CONDICION_DEFECTO,
+        CC.DOCUMENTO,
+        CC.APLICACION,
+        CC.SALDO_DOLAR,
+        CC.SALDO_LOCAL,
+        CC.FECHA_VENCE,
+        CC.CONDICION_PAGO
+    FROM ASISTENTE.CLIENTE AS A
+    INNER JOIN ASISTENTE.DOCUMENTOS_CC AS CC
+        ON A.CLIENTE = CC.CLIENTE
+    WHERE A.CLIENTE = @codigo
+      AND CC.SALDO_DOLAR > 0
+    ORDER BY CC.FECHA_VENCE, CC.DOCUMENTO;
+
+    -- Result set 3: historial de compras / detalle facturado
+    SELECT
+        F.FACTURA,
+        F.FECHA,
+        FL.ARTICULO,
+        F.ORDEN_COMPRA,
+        FL.DESCRIPCION,
+        F.MULTIPLICADOR_EV * FL.CANTIDAD AS CANTIDAD,
+        CASE
+            WHEN F.MONEDA_FACTURA = 'L'
+                THEN (FL.MULTIPLICADOR_EV * FL.PRECIO_TOTAL) / NULLIF(F.TIPO_CAMBIO, 0)
+            ELSE (FL.MULTIPLICADOR_EV * FL.PRECIO_TOTAL)
+        END AS TOTAL_LINEA,
+        F.OBSERVACIONES,
+        F.NOMBRE_CLIENTE,
+        F.CLIENTE,
+        CC.CENTRO_COSTO,
+        CC.DESCRIPCION AS DESCRIPCION_CC,
+        FL.U_INFORME
+    FROM ASISTENTE.FACTURA AS F
+    INNER JOIN ASISTENTE.FACTURA_LINEA AS FL
+        ON F.FACTURA = FL.FACTURA
+    INNER JOIN ASISTENTE.CENTRO_COSTO AS CC
+        ON CC.CENTRO_COSTO = FL.CENTRO_COSTO
+    WHERE F.CLIENTE = @codigo
+    ORDER BY F.FECHA DESC, F.FACTURA DESC;
+END
+GO
+
+GRANT EXECUTE ON OBJECT::[andi].[sp_cliente_360] TO [andi_gateway];
+GO
+
 /* ---------------------------------------------------------------------
    PRUEBAS (ejecútalas como administrador):
 

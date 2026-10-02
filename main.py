@@ -751,7 +751,7 @@ app = Starlette(
         Route("/condiciones-generales", terms_page, methods=["GET"]),
         Route("/terms", terms_page, methods=["GET"]),
         Mount("/assets", app=StaticFiles(directory=str(ROOT_DIR)), name="assets"),
-        Mount("/mcp", app=mcp_app),
+        Mount("/", app=mcp_app),  # FastMCP ya define la ruta interna /mcp
     ],
     lifespan=lifespan,
 )

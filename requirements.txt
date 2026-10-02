@@ -1,4 +1,4 @@
-mcp>=1.9,<2
+mcp>=1.30,<2
 uvicorn>=0.30
 pyodbc>=5.1
 python-dotenv>=1.0

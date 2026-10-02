@@ -2,6 +2,7 @@
 
 Herramientas expuestas:
   - buscar_cliente(termino)  -> andi.sp_buscar_cliente
+  - cliente_360(codigo_cliente) -> andi.sp_cliente_360
 
 Endpoints:
   - GET  /health   (sin autenticación, no revela datos)
@@ -80,6 +81,57 @@ async def buscar_cliente(termino: str) -> dict:
 
     db.audit("buscar_cliente", {"termino": termino}, len(rows), True)
     return {"total": len(rows), "clientes": rows}
+
+
+@mcp.tool()
+async def cliente_360(codigo_cliente: str) -> dict:
+    """Devuelve una vista 360 del cliente desde Softland.
+
+    Incluye ficha completa, cuentas por cobrar abiertas e historial detallado
+    de facturación/artículos. La consulta es de solo lectura.
+    """
+    codigo = (codigo_cliente or "").strip()
+    if not 1 <= len(codigo) <= 40:
+        db.audit("cliente_360", {"codigo_cliente": codigo[:40]}, None, False, "codigo_invalido")
+        return {"error": "El código de cliente es obligatorio y debe tener máximo 40 caracteres."}
+
+    try:
+        sets = await asyncio.to_thread(db.call_procedure_sets, "andi.sp_cliente_360", codigo)
+    except Exception as exc:
+        db.audit("cliente_360", {"codigo_cliente": codigo}, None, False, type(exc).__name__)
+        return {"error": "No se pudo consultar Cliente 360. Revisa el log del Gateway."}
+
+    perfil = sets[0][0] if len(sets) > 0 and sets[0] else None
+    cuentas_por_cobrar = sets[1] if len(sets) > 1 else []
+    historial = sets[2] if len(sets) > 2 else []
+
+    if perfil is None:
+        db.audit("cliente_360", {"codigo_cliente": codigo}, 0, True)
+        return {"error": "No se encontró el cliente solicitado.", "codigo_cliente": codigo}
+
+    saldo_dolar = round(sum(float(x.get("SALDO_DOLAR") or 0) for x in cuentas_por_cobrar), 2)
+    saldo_local = round(sum(float(x.get("SALDO_LOCAL") or 0) for x in cuentas_por_cobrar), 2)
+    total_facturado = round(sum(float(x.get("TOTAL_LINEA") or 0) for x in historial), 2)
+    facturas = {str(x.get("FACTURA")) for x in historial if x.get("FACTURA") is not None}
+    fechas = [x.get("FECHA") for x in historial if x.get("FECHA")]
+
+    resumen = {
+        "saldo_dolar": saldo_dolar,
+        "saldo_local": saldo_local,
+        "documentos_pendientes": len(cuentas_por_cobrar),
+        "total_facturado_usd": total_facturado,
+        "cantidad_facturas": len(facturas),
+        "ultima_compra": max(fechas) if fechas else None,
+    }
+
+    total_rows = 1 + len(cuentas_por_cobrar) + len(historial)
+    db.audit("cliente_360", {"codigo_cliente": codigo}, total_rows, True)
+    return {
+        "cliente": perfil,
+        "resumen": resumen,
+        "cuentas_por_cobrar": cuentas_por_cobrar,
+        "historial_compras": historial,
+    }
 
 
 @mcp.tool()

@@ -6,28 +6,31 @@ Herramientas expuestas:
 
 Endpoints:
   - GET  /health   (sin autenticación, no revela datos)
-  - POST /mcp      (protocolo MCP, requiere Bearer token)
+  - POST /mcp      (protocolo MCP, requiere token fijo o Microsoft Entra)
 """
 import asyncio
 import contextlib
 import hmac
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import requests
 import uvicorn
 from mcp.server.fastmcp import FastMCP
+from mcp.server.auth.settings import AuthSettings
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import HTMLResponse, JSONResponse
+from starlette.responses import FileResponse, HTMLResponse, JSONResponse
 from starlette.routing import Mount, Route
-from starlette.staticfiles import StaticFiles
 
 try:
-    from . import config, db
+    from . import config, db, gateway_auth
 except ImportError:  # Ejecutado como `python main.py`
     import config
     import db
+    import gateway_auth
 
 try:
     from .andi_agent import (
@@ -58,10 +61,38 @@ except ImportError:  # Ejecutado como `python main.py`
 
 VERSION = "0.1.0"
 
-mcp = FastMCP("ANDI Gateway", stateless_http=True, json_response=True)
+entra_settings = (
+    gateway_auth.EntraSettings.from_environment()
+    if config.GATEWAY_AUTH_MODE == "entra" else None
+)
+token_verifier = gateway_auth.EntraTokenVerifier(entra_settings) if entra_settings else None
+public_url = gateway_auth.public_base_url(config.PUBLIC_BASE_URL) if config.PUBLIC_BASE_URL else ""
+allowed_hosts = ["127.0.0.1:*", "localhost:*", "[::1]:*", "127.0.0.1", "localhost", "[::1]"]
+allowed_origins = ["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"]
+if public_url:
+    allowed_hosts.append(urlsplit(public_url).netloc)
+    allowed_origins.append(public_url)
+mcp = FastMCP(
+    "ANDI Gateway", stateless_http=True, json_response=True,
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=allowed_hosts, allowed_origins=allowed_origins,
+    ),
+    token_verifier=token_verifier,
+    auth=AuthSettings(
+        issuer_url=entra_settings.issuer,
+        resource_server_url=entra_settings.resource,
+        required_scopes=[entra_settings.qualified_scope],
+        # Entra v2 uses the application's UUID audience. PyJWT validates it.
+        validate_token_resource=False,
+    ) if entra_settings else None,
+)
+tool_auth_meta = {
+    "securitySchemes": [{"type": "oauth2", "scopes": [entra_settings.qualified_scope]}]
+} if entra_settings else None
 
 
-@mcp.tool()
+@mcp.tool(meta=tool_auth_meta)
 async def buscar_cliente(termino: str) -> dict:
     """Busca clientes en Softland por código o nombre (máximo 10 resultados).
 
@@ -83,7 +114,7 @@ async def buscar_cliente(termino: str) -> dict:
     return {"total": len(rows), "clientes": rows}
 
 
-@mcp.tool()
+@mcp.tool(meta=tool_auth_meta)
 async def cliente_360(codigo_cliente: str) -> dict:
     """Devuelve una vista 360 del cliente desde Softland.
 
@@ -134,7 +165,7 @@ async def cliente_360(codigo_cliente: str) -> dict:
     }
 
 
-@mcp.tool()
+@mcp.tool(meta=tool_auth_meta)
 async def buscar_clientes_para_cotizacion(termino: str, limite: int = 10) -> dict:
     """Busca clientes y devuelve una lista útil para escoger antes de preparar la cotización."""
     termino = (termino or "").strip()
@@ -154,7 +185,7 @@ async def buscar_clientes_para_cotizacion(termino: str, limite: int = 10) -> dic
     }
 
 
-@mcp.tool()
+@mcp.tool(meta=tool_auth_meta)
 async def seleccionar_cliente_cotizacion(termino: str, codigo_cliente: str) -> dict:
     """Valida si un cliente de la búsqueda es el que se quiere usar para la cotización."""
     termino = (termino or "").strip()
@@ -169,7 +200,7 @@ async def seleccionar_cliente_cotizacion(termino: str, codigo_cliente: str) -> d
     return {"seleccionado": False, "error": "No se encontró el cliente seleccionado."}
 
 
-@mcp.tool()
+@mcp.tool(meta=tool_auth_meta)
 async def crear_estimacion_proyecto(
     project_name: str,
     client_name: str,
@@ -195,7 +226,7 @@ async def crear_estimacion_proyecto(
     )
 
 
-@mcp.tool()
+@mcp.tool(meta=tool_auth_meta)
 async def crear_cronograma_proyecto(
     project_name: str,
     client_name: str,
@@ -221,7 +252,7 @@ async def crear_cronograma_proyecto(
     return build_project_schedule(estimate, start_date=start_date)
 
 
-@mcp.tool()
+@mcp.tool(meta=tool_auth_meta)
 async def generar_cotizacion(
     project_name: str,
     client_name: str,
@@ -270,7 +301,7 @@ async def generar_cotizacion(
     return quote
 
 
-@mcp.tool()
+@mcp.tool(meta=tool_auth_meta)
 async def resumir_reunion(notes: str) -> dict:
     """Resume una reunión o sesión con decisiones, pendientes y tareas."""
     if not notes or not notes.strip():
@@ -278,14 +309,14 @@ async def resumir_reunion(notes: str) -> dict:
     return summarize_meeting(notes)
 
 
-@mcp.tool()
+@mcp.tool(meta=tool_auth_meta)
 async def listar_cotizaciones(limit: int = 10) -> dict:
     """Devuelve el historial de cotizaciones generadas por ANDI."""
     data = list_quote_history(limit=limit)
     return {"total": len(data), "cotizaciones": data}
 
 
-@mcp.tool()
+@mcp.tool(meta=tool_auth_meta)
 async def obtener_cotizacion(cotizacion_id: str) -> dict:
     """Recupera una cotización por su identificador."""
     if not cotizacion_id:
@@ -297,7 +328,7 @@ async def obtener_cotizacion(cotizacion_id: str) -> dict:
     return {"error": "No se encontró la cotización solicitada."}
 
 
-@mcp.tool()
+@mcp.tool(meta=tool_auth_meta)
 async def generar_email_cotizacion(
     project_name: str,
     client_email: str,
@@ -310,16 +341,32 @@ async def generar_email_cotizacion(
 
 
 class BearerAuth(BaseHTTPMiddleware):
-    """Exige `Authorization: Bearer <GATEWAY_TOKEN>` en todo menos /health."""
+    """Protect gateway routes; the MCP SDK handles OAuth on /mcp."""
 
     async def dispatch(self, request, call_next):
         path = request.url.path
-        public_paths = {"/health", "/", "/condiciones-generales", "/terms"}
-        if path in public_paths or path.startswith("/assets"):
+        public_paths = {
+            "/health", "/", "/condiciones-generales", "/terms",
+            "/assets/Andi blanco.jpeg",
+        }
+        if path in public_paths:
+            return await call_next(request)
+        if entra_settings and path in {
+            "/mcp", "/.well-known/oauth-protected-resource/mcp",
+        }:
             return await call_next(request)
         header = request.headers.get("authorization", "")
         token = header[7:] if header.lower().startswith("bearer ") else ""
-        if not hmac.compare_digest(token, config.GATEWAY_TOKEN):
+        if token_verifier:
+            if await token_verifier.verify_token(token) is None:
+                return JSONResponse(
+                    {"error": "no autorizado"}, status_code=401,
+                    headers={"WWW-Authenticate": (
+                        f'Bearer resource_metadata="{entra_settings.metadata_url}", '
+                        f'scope="{entra_settings.qualified_scope}"'
+                    )},
+                )
+        elif not hmac.compare_digest(token.encode("utf-8"), config.GATEWAY_TOKEN.encode("utf-8")):
             return JSONResponse({"error": "no autorizado"}, status_code=401)
         return await call_next(request)
 
@@ -731,6 +778,10 @@ async def assistant_chat(request):
     return JSONResponse(response)
 
 
+async def logo(_request):
+    return FileResponse(ROOT_DIR / "Andi blanco.jpeg")
+
+
 mcp_app = mcp.streamable_http_app()  # debe crearse antes de usar mcp.session_manager
 ROOT_DIR = Path(__file__).resolve().parent
 
@@ -750,7 +801,7 @@ app = Starlette(
         Route("/api/chat", assistant_chat, methods=["GET", "POST"]),
         Route("/condiciones-generales", terms_page, methods=["GET"]),
         Route("/terms", terms_page, methods=["GET"]),
-        Mount("/assets", app=StaticFiles(directory=str(ROOT_DIR)), name="assets"),
+        Route("/assets/Andi blanco.jpeg", logo, methods=["GET"]),
         Mount("/", app=mcp_app),  # FastMCP ya define la ruta interna /mcp
     ],
     lifespan=lifespan,

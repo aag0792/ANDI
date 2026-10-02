@@ -77,3 +77,10 @@ para las pruebas), además de LOG_DIR apuntando a un directorio local de pruebas
 
 Se requiere MCP >=1.30 para la ruta directa sin redirección. Actualizar las
 dependencias con pip install -r requirements.txt antes de reiniciar.
+
+## Acceso remoto autenticado
+
+Para conectar ChatGPT al gateway por HTTPS, seguir [OAuth con Microsoft
+Entra](docs/oauth-entra.md). El modo token sigue disponible para el flujo local;
+el modo entra exige un token de Microsoft y restringe usuarios y clientes.
+El directorio assets sirve únicamente el logo, nunca archivos del proyecto.

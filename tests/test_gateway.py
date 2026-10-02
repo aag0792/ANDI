@@ -38,6 +38,12 @@ def test_mcp_endpoint_auth_and_existing_routes(client):
     assert client.get("/health").status_code == 200
     assert client.get("/").status_code == 200
     assert client.get("/terms").status_code == 200
+    assert client.get("/assets/Andi%20blanco.jpeg").status_code == 200
+    for path in ("/assets/.env", "/assets/conexion.env", "/assets/main.py"):
+        assert client.get(path).status_code == 401
+        assert client.get(path, headers={
+            "Authorization": f"Bearer {config.GATEWAY_TOKEN}",
+        }).status_code == 404
     assert client.post("/mcp", json={}).status_code == 401
     assert client.post("/mcp", headers={"Authorization": "Bearer wrong"}, json={}).status_code == 401
     response = rpc(client, "tools/list")

@@ -84,3 +84,51 @@ Para conectar ChatGPT al gateway por HTTPS, seguir [OAuth con Microsoft
 Entra](docs/oauth-entra.md). El modo token sigue disponible para el flujo local;
 el modo entra exige un token de Microsoft y restringe usuarios y clientes.
 El directorio assets sirve únicamente el logo, nunca archivos del proyecto.
+
+## Cotizaciones PDF AND
+
+`generar_cotizacion` conserva sus argumentos y su integración MCP. Se agregan
+`lines` (`quantity`, `description`, `unit_price`), `currency` (`USD`/`CRC`),
+`tax_rate`, `quote_number`, `quote_date` (`YYYY-MM-DD`), `codigo_cliente`,
+`client`, `requester`, `payment_method`, `observations`, `project_reference`,
+`company`, `banks` y `terms`. Las tasas son fracciones: IVA de 13% = `0.13`,
+sin IVA = `0`; descuento de 10% = `discount_percent=0.10`.
+
+Con líneas explícitas, los precios ya son comerciales: no se agrega el margen
+de la estimación. El subtotal suma los importes redondeados por línea; el
+ descuento se aplica antes del IVA, con redondeo decimal a dos posiciones.
+Sin líneas se conserva la estimación con margen/descuento; el PDF, respuesta
+comercial e historial registran el mismo total. El cronograma sigue siendo una
+estimación de proyecto, no se deduce de las líneas comerciales.
+
+`codigo_cliente` consulta `cliente_360` por los procedimientos existentes; no
+escribe en Softland. `client` completa o reemplaza campos de la ficha, usando
+`name`, `address`, `phone`, `email`, `payment_method` o las columnas originales
+`NOMBRE`, `DIRECCION`, `TELEFONO1`, `E_MAIL`, `CONDICION_PAGO`. Una condición de
+pago recuperada de Softland puede ser un código: usar `payment_method` para su
+texto comercial. No se asignan números oficiales: sin `quote_number` el PDF
+muestra `BORRADOR`. La fecha predeterminada usa Costa Rica.
+
+El diseño carta de dos páginas reproduce el logo, colores, datos, tabla,
+totales, observaciones, condiciones/aprobación de los tres ejemplos. Las cuentas bancarias se omiten
+por defecto; solo se incluyen si se proporcionan explícitamente en `banks`.
+No se guardan cuentas bancarias ni datos de contacto de clientes en el código.
+El estándar editable reside en `assets/quote-standard.json` y el logo extraído
+del PDF de referencia en `assets/quote-logo.png`. Se puede reemplazar company,
+banks o terms por cotización. Los textos se ajustan dentro de las celdas; si el
+contenido supera dos páginas se devuelve un error antes de escribir el PDF,
+sin truncar texto ni guardar historial.
+
+Ejemplo de campos adicionales para Barly:
+
+```json
+{
+  "lines": [{"quantity": 2, "description": "Consultoría ERP - Base de Datos", "unit_price": 60}],
+  "currency": "USD", "tax_rate": 0.13,
+  "quote_number": "P02435", "quote_date": "2026-09-16",
+  "payment_method": "8 Dias"
+}
+```
+
+Las pruebas de cotizaciones están en `tests/test_quotation_pdf.py` y las
+regresiones MCP en `tests/test_gateway.py`. No requieren acceso a Softland.

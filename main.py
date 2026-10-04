@@ -265,8 +265,28 @@ async def generar_cotizacion(
     discount_percent: float = 0.0,
     margin_percent: float = 0.2,
     output_path: str = "exports/propuesta.pdf",
+    lines: list[dict] | None = None,
+    currency: str = "CRC",
+    tax_rate: float = 0.0,
+    quote_number: str | None = None,
+    quote_date: str | None = None,
+    codigo_cliente: str | None = None,
+    client: dict | None = None,
+    requester: str = "",
+    payment_method: str = "",
+    observations: str = "",
+    project_reference: str = "",
+    company: dict | None = None,
+    banks: list[str] | None = None,
+    terms: list[dict] | None = None,
 ) -> dict:
-    """Genera la estimación, cronograma y PDF de la propuesta con costo final."""
+    """Cotización AND de dos páginas. lines: quantity, description, unit_price.
+
+    Tasas como fracción: tax_rate=0.13 o 0; discount_percent=0.10.
+    Con lines se usan precios comerciales sin margen automático.
+    codigo_cliente recupera la ficha Softland; client permite completar datos.
+    quote_date usa YYYY-MM-DD. Sin número se marca BORRADOR.
+    """
     estimate = estimate_project(
         project_name=project_name,
         client_name=client_name,
@@ -284,7 +304,45 @@ async def generar_cotizacion(
         discount_percent=discount_percent,
         margin_percent=margin_percent,
     )
-    pdf = generate_pdf_proposal(estimate, output_path=output_path)
+    profile = {}
+    if codigo_cliente is not None:
+        result = await cliente_360(codigo_cliente)
+        if "error" in result:
+            return result
+        profile = result["cliente"]
+        client_name = profile.get("NOMBRE") or profile.get("nombre") or client_name
+    profile = {**profile, **(client or {})}
+    document = {
+        **estimate, "client_name": client_name, "client": profile,
+        "currency": currency, "tax_rate": tax_rate, "quote_number": quote_number,
+        "quote_date": quote_date, "requester": requester,
+        "payment_method": payment_method, "observations": observations,
+        "project_reference": project_reference, "company": company or {},
+    }
+    if lines is not None:
+        document.update(lines=lines, discount_percent=discount_percent)
+    else:
+        # Preserve legacy commercial margin/discount, and render its final cost.
+        document["total_cost"] = round(quote["base_cost"] * (1 + max(0.0, min(margin_percent, 0.8))), 2)
+        document["discount_percent"] = max(0.0, min(discount_percent, 0.5))
+    if banks is not None:
+        document["banks"] = banks
+    if terms is not None:
+        document["terms"] = terms
+    try:
+        pdf = generate_pdf_proposal(document, output_path=output_path)
+    except (ValueError, KeyError, TypeError) as exc:
+        return {"error": str(exc)}
+    commercial = pdf["quotation"]
+    quote.update(client_name=client_name, currency=currency,
+                 final_cost=commercial["total"], quotation=commercial,
+                 subtotal=commercial["subtotal"], tax_amount=commercial["tax_amount"],
+                 discount_amount=commercial["discount_amount"])
+    if lines is not None:
+        quote.update(base_cost=commercial["subtotal"],
+                     discount_percent=commercial["discount_percent"],
+                     adjusted_cost=round(commercial["subtotal"] - commercial["discount_amount"], 2),
+                     margin_percent=0.0)
     quote["pdf"] = pdf
     schedule = build_project_schedule(estimate)
     quote["schedule"] = schedule
@@ -733,7 +791,7 @@ async def assistant_chat(request):
             margin_percent=0.2,
         )
         pdf_path = f"exports/{parsed['project_name'].lower().replace(' ', '_')}.pdf"
-        pdf = generate_pdf_proposal(estimate, output_path=pdf_path)
+        pdf = generate_pdf_proposal({**estimate, "total_cost": proposal["final_cost"]}, output_path=pdf_path)
         proposal["pdf"] = pdf
         schedule = build_project_schedule(estimate)
         proposal["schedule"] = schedule

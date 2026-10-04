@@ -6,9 +6,6 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from reportlab.lib.pagesizes import letter
-from reportlab.lib.units import mm
-from reportlab.pdfgen import canvas
 
 
 COMPLEXITY_FACTOR = {
@@ -325,59 +322,12 @@ def list_quote_history(limit: int = 10) -> list[dict[str, Any]]:
 
 
 def generate_pdf_proposal(estimate: dict[str, Any], output_path: str = "exports/propuesta.pdf") -> dict[str, Any]:
-    """Genera un PDF con propuesta y condiciones generales."""
-    target = Path(output_path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-
-    pdf = canvas.Canvas(str(target), pagesize=letter)
-    width, height = letter
-
-    pdf.setTitle(f"Propuesta - {estimate['project_name']}")
-    pdf.setFont("Helvetica-Bold", 18)
-    pdf.drawString(30 * mm, height - 25 * mm, "ANDI - Propuesta de proyecto")
-
-    pdf.setFont("Helvetica", 11)
-    pdf.drawString(30 * mm, height - 38 * mm, f"Proyecto: {estimate['project_name']}")
-    pdf.drawString(30 * mm, height - 46 * mm, f"Cliente: {estimate['client_name']}")
-    pdf.drawString(30 * mm, height - 54 * mm, f"Complejidad: {estimate['complexity']}")
-    pdf.drawString(30 * mm, height - 62 * mm, f"Horas estimadas: {estimate['total_hours']}")
-    pdf.drawString(30 * mm, height - 70 * mm, f"Costo estimado: ₡{estimate['total_cost']:.2f}")
-
-    y = height - 95 * mm
-    pdf.setFont("Helvetica-Bold", 12)
-    pdf.drawString(30 * mm, y, "Fases")
-    y -= 8 * mm
-    pdf.setFont("Helvetica", 10)
-
-    for phase in estimate["phases"]:
-        pdf.drawString(32 * mm, y, f"- {phase['name']}: {phase['hours']} hrs")
-        y -= 7 * mm
-        if y < 40 * mm:
-            pdf.showPage()
-            y = height - 20 * mm
-
-    pdf.showPage()
-    pdf.setFont("Helvetica-Bold", 16)
-    pdf.drawString(30 * mm, height - 25 * mm, "Condiciones generales")
-    pdf.setFont("Helvetica", 10)
-    terms = [
-        "1. El alcance, costo y fechas serán confirmados por escrito antes del inicio del proyecto.",
-        "2. Los tiempos de entrega pueden ajustarse según cambios de alcance, dependencias o entregables adicionales.",
-        "3. El pago se realizará en los plazos acordados por la propuesta y podrá requerir anticipo inicial.",
-        "4. El cliente deberá proporcionar información, acceso y aprobaciones en tiempo para evitar retrasos.",
-        "5. ANDI se reserva el derecho a ejecutar la entrega en función del alcance aprobado y la disponibilidad de recursos.",
-        "6. Esta propuesta tiene vigencia de 15 días naturales a partir de su emisión.",
-    ]
-    y = height - 40 * mm
-    for line in terms:
-        pdf.drawString(30 * mm, y, line[:110])
-        y -= 8 * mm
-        if y < 32 * mm:
-            pdf.showPage()
-            y = height - 20 * mm
-    pdf.save()
-
-    return {"created": True, "path": str(target), "filename": target.name}
+    """Genera la cotización AND de dos páginas; acepta estimaciones anteriores."""
+    try:
+        from .quotation_pdf import render_quotation
+    except ImportError:
+        from quotation_pdf import render_quotation
+    return render_quotation(estimate, output_path)
 
 
 def summarize_meeting(notes: str) -> dict[str, Any]:

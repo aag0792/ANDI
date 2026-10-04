@@ -91,3 +91,41 @@ def test_cliente_360_invalid_missing_and_database_error(client):
         failed = rpc(client, "tools/call", {"name": "cliente_360", "arguments": {"codigo_cliente": "C0090"}})
         assert "error" in tool_result(failed)
         assert "private database detail" not in failed.text
+
+
+def test_quote_commercial_fields_softland_and_history(client, tmp_path):
+    profile = {'NOMBRE': 'BARLY de Softland', 'DIRECCION': 'Heredia',
+               'TELEFONO1': '00000000', 'E_MAIL': 'cliente@example.test'}
+    with patch.object(main.db, 'call_procedure_sets', return_value=[[profile], [], []]) as call, patch.object(main.db, 'audit'), patch.object(main, 'save_quote_history', side_effect=lambda r:r) as history:
+        result = tool_result(rpc(client, 'tools/call', {'name':'generar_cotizacion','arguments':{
+            'project_name':'Consultoría', 'client_name':'Barly', 'description':'ERP',
+            'codigo_cliente':'C001', 'currency':'USD', 'tax_rate':.13,
+            'lines':[{'quantity':2,'description':'ERP','unit_price':60}],
+            'quote_number':'P02435','quote_date':'2026-09-16',
+            'output_path':str(tmp_path/'mcp.pdf')}}))
+        assert result['final_cost'] == 135.60
+        assert result['quotation']['client'] == profile
+        assert result['client_name'] == profile['NOMBRE']
+        assert result['pdf']['quotation']['total'] == result['final_cost']
+        assert history.call_args.args[0]['final_cost'] == 135.60
+        call.assert_called_once_with('andi.sp_cliente_360', 'C001')
+
+
+def test_legacy_quote_pdf_and_history_agree(client,tmp_path):
+    with patch.object(main, 'save_quote_history', side_effect=lambda r:r) as history:
+        result = tool_result(rpc(client,'tools/call',{'name':'generar_cotizacion','arguments':{
+            'project_name':'Proyecto', 'client_name':'Cliente', 'description':'Software',
+            'discount_percent':.1,'margin_percent':.2,'output_path':str(tmp_path/'legacy.pdf')}}))
+        assert result['final_cost'] == result['pdf']['quotation']['total']
+        assert result['quotation']['discount_amount'] > 0
+        assert history.call_args.args[0]['final_cost'] == result['final_cost']
+
+
+def test_quote_invalid_data_does_not_save(client,tmp_path):
+    with patch.object(main,'save_quote_history') as history:
+        result=tool_result(rpc(client,'tools/call',{'name':'generar_cotizacion','arguments':{
+            'project_name':'Proyecto','client_name':'Cliente','description':'ERP',
+            'lines':[],'output_path':str(tmp_path/'invalid.pdf')}}))
+        assert 'error' in result
+        history.assert_not_called()
+        assert not (tmp_path/'invalid.pdf').exists()

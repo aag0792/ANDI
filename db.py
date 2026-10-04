@@ -72,3 +72,28 @@ def call_procedure(proc: str, *args) -> list[dict]:
             return []
         cols = [c[0] for c in cursor.description]
         return [{c: _clean(v) for c, v in zip(cols, row)} for row in cursor.fetchall()]
+
+
+def call_procedure_sets(proc: str, *args) -> list[list[dict]]:
+    """Ejecuta un procedimiento y devuelve todos sus result sets tabulares.
+
+    Mantiene la misma restricción de seguridad: no acepta SQL libre, solo el
+    nombre de un procedimiento y parámetros posicionales.
+    """
+    placeholders = ", ".join("?" for _ in args)
+    sql = f"EXEC {proc} {placeholders}".strip()
+    result_sets: list[list[dict]] = []
+    with pyodbc.connect(_connection_string(), timeout=5) as conn:
+        cursor = conn.cursor()
+        cursor.execute(sql, *args)
+        while True:
+            if cursor.description is not None:
+                cols = [c[0] for c in cursor.description]
+                rows = [
+                    {c: _clean(v) for c, v in zip(cols, row)}
+                    for row in cursor.fetchall()
+                ]
+                result_sets.append(rows)
+            if not cursor.nextset():
+                break
+    return result_sets

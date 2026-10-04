@@ -1,0 +1,24 @@
+{
+  "company": {
+    "name": "AND Once Cuarenta y Cuatro LTDA",
+    "tax_id": "3-102-803986",
+    "address": "Alajuela, Costa Rica",
+    "phone": "72063204",
+    "email": "contact@and.cr"
+  },
+  "banks": [],
+  "terms": [
+    {
+      "title": "Método de Trabajo",
+      "text": "- Servicios remotos el tiempo mínimo de cobro es de una hora.\n- Servicios en sitio el tiempo mínimo de cobro es de 2 horas. (Dentro del GAM) (Recargo de $5 por hora)\n- Servicios en sitio fuera del GAM es necesario negociar las condiciones de estos tomando en cuenta los escenarios\nanteriores.\n- Cada servicio brindado es reportado al cliente por medio de un informe de trabajo. El cual se facturará tomando en\ncuenta esta cotización.\n"
+    },
+    {
+      "title": "Sobre Cambios o Cancelaciones",
+      "text": "Los servicios se brindan en horario de 8 a.m. a 12 p.m. y de 1 p.m. a 6 p.m., de lunes a viernes a la tarifa estándar\npublicada.\nLos servicios solicitados en horarios diferentes al indicado anteriormente tendrán un recargo de U$ 10 (diéz dólares\namericanos) adicionales por hora.\nSi la cita se cancela con al menos 24 horas de anticipación, no aplica cargo o cobro por la visita.\nSi se cancela dentro de las 24 horas previas a la cita, pero antes de las 4:30 pm, aplica el cobro del 50% de la totalidad\nde las horas pactadas\nSi se cancela después de las 4:30 pm del día previo a la visita o sesion remota o en el mismo momento en que el\nconsultor se presenta donde el cliente, se hará un cargo del 100% de las horas pactadas para el servicio\n"
+    },
+    {
+      "title": "Consideraciones Adicionales",
+      "text": "El cliente reconoce que es su responsabilidad analizar las características, cualidades, alcance y funcionalidades de\ncada uno de los productos y/o servicios que pretende adquirir, y que los mismos se ajustan a sus necesidades\nPensando en el bienestar de nuestros clientes los trabajos se realizan por hora incurrida, esto quiere decir, solo sé\ncobra lo que se utiliza; tomando en cuenta los mínimos de servicios descritos anteriormente.\n*En caso de ser un proyecto o contrato pueden aplicar condiciones diferentes.\n"
+    }
+  ]
+}

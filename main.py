@@ -2,31 +2,35 @@
 
 Herramientas expuestas:
   - buscar_cliente(termino)  -> andi.sp_buscar_cliente
+  - cliente_360(codigo_cliente) -> andi.sp_cliente_360
 
 Endpoints:
   - GET  /health   (sin autenticación, no revela datos)
-  - POST /mcp      (protocolo MCP, requiere Bearer token)
+  - POST /mcp      (protocolo MCP, requiere token fijo o Microsoft Entra)
 """
 import asyncio
 import contextlib
 import hmac
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import requests
 import uvicorn
 from mcp.server.fastmcp import FastMCP
+from mcp.server.auth.settings import AuthSettings
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import HTMLResponse, JSONResponse
+from starlette.responses import FileResponse, HTMLResponse, JSONResponse
 from starlette.routing import Mount, Route
-from starlette.staticfiles import StaticFiles
 
 try:
-    from . import config, db
+    from . import config, db, gateway_auth
 except ImportError:  # Ejecutado como `python main.py`
     import config
     import db
+    import gateway_auth
 
 try:
     from .andi_agent import (
@@ -57,10 +61,38 @@ except ImportError:  # Ejecutado como `python main.py`
 
 VERSION = "0.1.0"
 
-mcp = FastMCP("ANDI Gateway", stateless_http=True, json_response=True)
+entra_settings = (
+    gateway_auth.EntraSettings.from_environment()
+    if config.GATEWAY_AUTH_MODE == "entra" else None
+)
+token_verifier = gateway_auth.EntraTokenVerifier(entra_settings) if entra_settings else None
+public_url = gateway_auth.public_base_url(config.PUBLIC_BASE_URL) if config.PUBLIC_BASE_URL else ""
+allowed_hosts = ["127.0.0.1:*", "localhost:*", "[::1]:*", "127.0.0.1", "localhost", "[::1]"]
+allowed_origins = ["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"]
+if public_url:
+    allowed_hosts.append(urlsplit(public_url).netloc)
+    allowed_origins.append(public_url)
+mcp = FastMCP(
+    "ANDI Gateway", stateless_http=True, json_response=True,
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=allowed_hosts, allowed_origins=allowed_origins,
+    ),
+    token_verifier=token_verifier,
+    auth=AuthSettings(
+        issuer_url=entra_settings.issuer,
+        resource_server_url=entra_settings.resource,
+        required_scopes=[entra_settings.qualified_scope],
+        # Entra v2 uses the application's UUID audience. PyJWT validates it.
+        validate_token_resource=False,
+    ) if entra_settings else None,
+)
+tool_auth_meta = {
+    "securitySchemes": [{"type": "oauth2", "scopes": [entra_settings.qualified_scope]}]
+} if entra_settings else None
 
 
-@mcp.tool()
+@mcp.tool(meta=tool_auth_meta)
 async def buscar_cliente(termino: str) -> dict:
     """Busca clientes en Softland por código o nombre (máximo 10 resultados).
 
@@ -82,7 +114,58 @@ async def buscar_cliente(termino: str) -> dict:
     return {"total": len(rows), "clientes": rows}
 
 
-@mcp.tool()
+@mcp.tool(meta=tool_auth_meta)
+async def cliente_360(codigo_cliente: str) -> dict:
+    """Devuelve una vista 360 del cliente desde Softland.
+
+    Incluye ficha completa, cuentas por cobrar abiertas e historial detallado
+    de facturación/artículos. La consulta es de solo lectura.
+    """
+    codigo = (codigo_cliente or "").strip()
+    if not 1 <= len(codigo) <= 40:
+        db.audit("cliente_360", {"codigo_cliente": codigo[:40]}, None, False, "codigo_invalido")
+        return {"error": "El código de cliente es obligatorio y debe tener máximo 40 caracteres."}
+
+    try:
+        sets = await asyncio.to_thread(db.call_procedure_sets, "andi.sp_cliente_360", codigo)
+    except Exception as exc:
+        db.audit("cliente_360", {"codigo_cliente": codigo}, None, False, type(exc).__name__)
+        return {"error": "No se pudo consultar Cliente 360. Revisa el log del Gateway."}
+
+    perfil = sets[0][0] if len(sets) > 0 and sets[0] else None
+    cuentas_por_cobrar = sets[1] if len(sets) > 1 else []
+    historial = sets[2] if len(sets) > 2 else []
+
+    if perfil is None:
+        db.audit("cliente_360", {"codigo_cliente": codigo}, 0, True)
+        return {"error": "No se encontró el cliente solicitado.", "codigo_cliente": codigo}
+
+    saldo_dolar = round(sum(float(x.get("SALDO_DOLAR") or 0) for x in cuentas_por_cobrar), 2)
+    saldo_local = round(sum(float(x.get("SALDO_LOCAL") or 0) for x in cuentas_por_cobrar), 2)
+    total_facturado = round(sum(float(x.get("TOTAL_LINEA") or 0) for x in historial), 2)
+    facturas = {str(x.get("FACTURA")) for x in historial if x.get("FACTURA") is not None}
+    fechas = [x.get("FECHA") for x in historial if x.get("FECHA")]
+
+    resumen = {
+        "saldo_dolar": saldo_dolar,
+        "saldo_local": saldo_local,
+        "documentos_pendientes": len(cuentas_por_cobrar),
+        "total_facturado_usd": total_facturado,
+        "cantidad_facturas": len(facturas),
+        "ultima_compra": max(fechas) if fechas else None,
+    }
+
+    total_rows = 1 + len(cuentas_por_cobrar) + len(historial)
+    db.audit("cliente_360", {"codigo_cliente": codigo}, total_rows, True)
+    return {
+        "cliente": perfil,
+        "resumen": resumen,
+        "cuentas_por_cobrar": cuentas_por_cobrar,
+        "historial_compras": historial,
+    }
+
+
+@mcp.tool(meta=tool_auth_meta)
 async def buscar_clientes_para_cotizacion(termino: str, limite: int = 10) -> dict:
     """Busca clientes y devuelve una lista útil para escoger antes de preparar la cotización."""
     termino = (termino or "").strip()
@@ -102,7 +185,7 @@ async def buscar_clientes_para_cotizacion(termino: str, limite: int = 10) -> dic
     }
 
 
-@mcp.tool()
+@mcp.tool(meta=tool_auth_meta)
 async def seleccionar_cliente_cotizacion(termino: str, codigo_cliente: str) -> dict:
     """Valida si un cliente de la búsqueda es el que se quiere usar para la cotización."""
     termino = (termino or "").strip()
@@ -117,7 +200,7 @@ async def seleccionar_cliente_cotizacion(termino: str, codigo_cliente: str) -> d
     return {"seleccionado": False, "error": "No se encontró el cliente seleccionado."}
 
 
-@mcp.tool()
+@mcp.tool(meta=tool_auth_meta)
 async def crear_estimacion_proyecto(
     project_name: str,
     client_name: str,
@@ -143,7 +226,7 @@ async def crear_estimacion_proyecto(
     )
 
 
-@mcp.tool()
+@mcp.tool(meta=tool_auth_meta)
 async def crear_cronograma_proyecto(
     project_name: str,
     client_name: str,
@@ -169,7 +252,7 @@ async def crear_cronograma_proyecto(
     return build_project_schedule(estimate, start_date=start_date)
 
 
-@mcp.tool()
+@mcp.tool(meta=tool_auth_meta)
 async def generar_cotizacion(
     project_name: str,
     client_name: str,
@@ -182,8 +265,28 @@ async def generar_cotizacion(
     discount_percent: float = 0.0,
     margin_percent: float = 0.2,
     output_path: str = "exports/propuesta.pdf",
+    lines: list[dict] | None = None,
+    currency: str = "CRC",
+    tax_rate: float = 0.0,
+    quote_number: str | None = None,
+    quote_date: str | None = None,
+    codigo_cliente: str | None = None,
+    client: dict | None = None,
+    requester: str = "",
+    payment_method: str = "",
+    observations: str = "",
+    project_reference: str = "",
+    company: dict | None = None,
+    banks: list[str] | None = None,
+    terms: list[dict] | None = None,
 ) -> dict:
-    """Genera la estimación, cronograma y PDF de la propuesta con costo final."""
+    """Cotización AND de dos páginas. lines: quantity, description, unit_price.
+
+    Tasas como fracción: tax_rate=0.13 o 0; discount_percent=0.10.
+    Con lines se usan precios comerciales sin margen automático.
+    codigo_cliente recupera la ficha Softland; client permite completar datos.
+    quote_date usa YYYY-MM-DD. Sin número se marca BORRADOR.
+    """
     estimate = estimate_project(
         project_name=project_name,
         client_name=client_name,
@@ -201,7 +304,45 @@ async def generar_cotizacion(
         discount_percent=discount_percent,
         margin_percent=margin_percent,
     )
-    pdf = generate_pdf_proposal(estimate, output_path=output_path)
+    profile = {}
+    if codigo_cliente is not None:
+        result = await cliente_360(codigo_cliente)
+        if "error" in result:
+            return result
+        profile = result["cliente"]
+        client_name = profile.get("NOMBRE") or profile.get("nombre") or client_name
+    profile = {**profile, **(client or {})}
+    document = {
+        **estimate, "client_name": client_name, "client": profile,
+        "currency": currency, "tax_rate": tax_rate, "quote_number": quote_number,
+        "quote_date": quote_date, "requester": requester,
+        "payment_method": payment_method, "observations": observations,
+        "project_reference": project_reference, "company": company or {},
+    }
+    if lines is not None:
+        document.update(lines=lines, discount_percent=discount_percent)
+    else:
+        # Preserve legacy commercial margin/discount, and render its final cost.
+        document["total_cost"] = round(quote["base_cost"] * (1 + max(0.0, min(margin_percent, 0.8))), 2)
+        document["discount_percent"] = max(0.0, min(discount_percent, 0.5))
+    if banks is not None:
+        document["banks"] = banks
+    if terms is not None:
+        document["terms"] = terms
+    try:
+        pdf = generate_pdf_proposal(document, output_path=output_path)
+    except (ValueError, KeyError, TypeError) as exc:
+        return {"error": str(exc)}
+    commercial = pdf["quotation"]
+    quote.update(client_name=client_name, currency=currency,
+                 final_cost=commercial["total"], quotation=commercial,
+                 subtotal=commercial["subtotal"], tax_amount=commercial["tax_amount"],
+                 discount_amount=commercial["discount_amount"])
+    if lines is not None:
+        quote.update(base_cost=commercial["subtotal"],
+                     discount_percent=commercial["discount_percent"],
+                     adjusted_cost=round(commercial["subtotal"] - commercial["discount_amount"], 2),
+                     margin_percent=0.0)
     quote["pdf"] = pdf
     schedule = build_project_schedule(estimate)
     quote["schedule"] = schedule
@@ -218,7 +359,7 @@ async def generar_cotizacion(
     return quote
 
 
-@mcp.tool()
+@mcp.tool(meta=tool_auth_meta)
 async def resumir_reunion(notes: str) -> dict:
     """Resume una reunión o sesión con decisiones, pendientes y tareas."""
     if not notes or not notes.strip():
@@ -226,14 +367,14 @@ async def resumir_reunion(notes: str) -> dict:
     return summarize_meeting(notes)
 
 
-@mcp.tool()
+@mcp.tool(meta=tool_auth_meta)
 async def listar_cotizaciones(limit: int = 10) -> dict:
     """Devuelve el historial de cotizaciones generadas por ANDI."""
     data = list_quote_history(limit=limit)
     return {"total": len(data), "cotizaciones": data}
 
 
-@mcp.tool()
+@mcp.tool(meta=tool_auth_meta)
 async def obtener_cotizacion(cotizacion_id: str) -> dict:
     """Recupera una cotización por su identificador."""
     if not cotizacion_id:
@@ -245,7 +386,7 @@ async def obtener_cotizacion(cotizacion_id: str) -> dict:
     return {"error": "No se encontró la cotización solicitada."}
 
 
-@mcp.tool()
+@mcp.tool(meta=tool_auth_meta)
 async def generar_email_cotizacion(
     project_name: str,
     client_email: str,
@@ -258,16 +399,32 @@ async def generar_email_cotizacion(
 
 
 class BearerAuth(BaseHTTPMiddleware):
-    """Exige `Authorization: Bearer <GATEWAY_TOKEN>` en todo menos /health."""
+    """Protect gateway routes; the MCP SDK handles OAuth on /mcp."""
 
     async def dispatch(self, request, call_next):
         path = request.url.path
-        public_paths = {"/health", "/", "/condiciones-generales", "/terms"}
-        if path in public_paths or path.startswith("/assets"):
+        public_paths = {
+            "/health", "/", "/condiciones-generales", "/terms",
+            "/assets/Andi blanco.jpeg",
+        }
+        if path in public_paths:
+            return await call_next(request)
+        if entra_settings and path in {
+            "/mcp", "/.well-known/oauth-protected-resource/mcp",
+        }:
             return await call_next(request)
         header = request.headers.get("authorization", "")
         token = header[7:] if header.lower().startswith("bearer ") else ""
-        if not hmac.compare_digest(token, config.GATEWAY_TOKEN):
+        if token_verifier:
+            if await token_verifier.verify_token(token) is None:
+                return JSONResponse(
+                    {"error": "no autorizado"}, status_code=401,
+                    headers={"WWW-Authenticate": (
+                        f'Bearer resource_metadata="{entra_settings.metadata_url}", '
+                        f'scope="{entra_settings.qualified_scope}"'
+                    )},
+                )
+        elif not hmac.compare_digest(token.encode("utf-8"), config.GATEWAY_TOKEN.encode("utf-8")):
             return JSONResponse({"error": "no autorizado"}, status_code=401)
         return await call_next(request)
 
@@ -634,7 +791,7 @@ async def assistant_chat(request):
             margin_percent=0.2,
         )
         pdf_path = f"exports/{parsed['project_name'].lower().replace(' ', '_')}.pdf"
-        pdf = generate_pdf_proposal(estimate, output_path=pdf_path)
+        pdf = generate_pdf_proposal({**estimate, "total_cost": proposal["final_cost"]}, output_path=pdf_path)
         proposal["pdf"] = pdf
         schedule = build_project_schedule(estimate)
         proposal["schedule"] = schedule
@@ -679,6 +836,10 @@ async def assistant_chat(request):
     return JSONResponse(response)
 
 
+async def logo(_request):
+    return FileResponse(ROOT_DIR / "Andi blanco.jpeg")
+
+
 mcp_app = mcp.streamable_http_app()  # debe crearse antes de usar mcp.session_manager
 ROOT_DIR = Path(__file__).resolve().parent
 
@@ -698,8 +859,8 @@ app = Starlette(
         Route("/api/chat", assistant_chat, methods=["GET", "POST"]),
         Route("/condiciones-generales", terms_page, methods=["GET"]),
         Route("/terms", terms_page, methods=["GET"]),
-        Mount("/assets", app=StaticFiles(directory=str(ROOT_DIR)), name="assets"),
-        Mount("/mcp", app=mcp_app),
+        Route("/assets/Andi blanco.jpeg", logo, methods=["GET"]),
+        Mount("/", app=mcp_app),  # FastMCP ya define la ruta interna /mcp
     ],
     lifespan=lifespan,
 )

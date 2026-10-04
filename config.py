@@ -33,7 +33,12 @@ SQL_DRIVER = os.getenv("SQL_DRIVER", "ODBC Driver 18 for SQL Server")
 
 # --- Gateway ---
 # Token que deben enviar los clientes en: Authorization: Bearer <token>
-GATEWAY_TOKEN = _required("GATEWAY_TOKEN")
+GATEWAY_AUTH_MODE = os.getenv("GATEWAY_AUTH_MODE", "token").lower()
+if GATEWAY_AUTH_MODE not in {"token", "entra"}:
+    raise RuntimeError("GATEWAY_AUTH_MODE debe ser token o entra.")
+# En modo entra nunca se acepta el token fijo, aunque siga en el archivo.
+GATEWAY_TOKEN = _required("GATEWAY_TOKEN") if GATEWAY_AUTH_MODE == "token" else ""
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "")
 HOST = os.getenv("GATEWAY_HOST", "127.0.0.1")   # solo local por defecto
 PORT = int(os.getenv("GATEWAY_PORT", "8000"))
 LOG_DIR = os.getenv("LOG_DIR", r"C:\ANDI\logs")

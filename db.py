@@ -68,7 +68,10 @@ def call_procedure(proc: str, *args) -> list[dict]:
     with pyodbc.connect(_connection_string(), timeout=5) as conn:
         cursor = conn.cursor()
         cursor.execute(sql, *args)
-        if cursor.description is None:
-            return []
+        # SQL Server puede emitir conteos de filas antes del SELECT final.
+        # Avanzar solo resultados sin columnas; conservar un SELECT vacío.
+        while cursor.description is None:
+            if not cursor.nextset():
+                return []
         cols = [c[0] for c in cursor.description]
         return [{c: _clean(v) for c, v in zip(cols, row)} for row in cursor.fetchall()]

@@ -1,0 +1,63 @@
+ANDI: corrección de autenticación Entra y descubrimiento MCP
+
+Archivos: main.py, config.py, auth_entra.py.
+1. Respaldar main.py y config.py originales en una carpeta FUERA de la carpeta
+   pública del proyecto. No colocar .bak accesibles a través del servidor.
+2. Detener ANDI usando el mismo servicio o terminal que lo inicia normalmente.
+3. Copiar los tres .py de este paquete a la carpeta donde están main.py,
+   db.py, andi_agent.py y softland_tools.py. Reemplazar main.py y config.py.
+   No cambiar los otros módulos ni las credenciales SQL.
+4. En el .env o conexion.env que ya utiliza ANDI, revisar/agregar estas líneas
+   (una sola definición por variable):
+
+GATEWAY_AUTH_MODE=entra
+ENTRA_TENANT_ID=2ad11a58-8b17-4771-afba-bca9807e7fd9
+ENTRA_CLIENT_ID=199e0ed4-b5f5-4923-9582-7a87fca82c47
+ENTRA_REQUIRED_SCOPE=andi.access
+PUBLIC_BASE_URL=https://andi.and.cr
+ENTRA_AUDIENCE_V1=https://andi.and.cr/mcp
+
+ENTRA_CLIENT_ID debe ser el Application ID de la API que expone andi.access.
+Se ha usado el App ID compartido en la conversación; si la API y el cliente
+OAuth son registros distintos, usar aquí el App ID de la API.
+El Client Secret se conserva únicamente en la configuración segura de ChatGPT;
+el servidor valida firmas públicas y no necesita ese secreto.
+
+Restricciones opcionales existentes: ENTRA_ALLOWED_USER/ENTRA_ALLOWED_USERS
+aceptan oid, preferred_username, upn o email. ENTRA_ALLOWED_CLIENT/
+ENTRA_ALLOWED_CLIENTS aceptan el azp (v2) o appid (v1) del cliente OAuth.
+Valores separados por comas o punto y coma. Si la variante plural existe,
+prevalece sobre la singular. No eliminar restricciones que ya utilice ANDI.
+
+5. Instalar requirements.txt en el entorno del proyecto. Compatible con mcp 1.30.0,
+   Starlette 1.7.0, PyJWT 2.15.1 y cryptography ya instalados.
+6. Reiniciar ANDI con su mecanismo habitual. Si falla, copiar el error de la
+   consola/log sin tokens ni contraseñas. No deshabilitar autenticación.
+7. En el plugin ANDI MCP que ya se creó, pulsar Connect de nuevo.
+   Mantener Server URL https://andi.and.cr/mcp y los ajustes OAuth existentes.
+   Si descubre herramientas, iniciar un chat nuevo y seleccionar ANDI MCP.
+   Probar primero buscar_cliente con un término de cliente conocido.
+
+Cambios:
+- Valida firma RS256 con claves de Microsoft, emisor, audiencia, tenant,
+  fechas y permiso delegado andi.access. Admite access tokens Entra v1 y v2
+  con reglas específicas para cada versión. Rechaza tokens fijos.
+- Publica metadatos del recurso OAuth y WWW-Authenticate en respuestas 401.
+- Monta FastMCP en la raíz: el endpoint interno /mcp ya no se duplica.
+- Permite explícitamente el host público sin desactivar protección de hosts.
+- Publica únicamente el logo conocido bajo /assets, nunca código ni .env.
+- Muestra mensajes del chat como texto para evitar interpretar HTML.
+
+Verificación local realizada con las mismas versiones de MCP/Starlette/PyJWT:
+initialize y tools/list en /mcp responden 200 con token de prueba válido;
+sin token responde 401. Rechaza firma/audiencia/emisor/tenant/fechas/scope
+incorrectos y usuario fuera de allowlist. Se verificaron tokens v1/v2.
+/ assets/config.py y /assets/.env no se publican (404 con autenticación).
+Se usaron claves de prueba y sustitutos de módulos empresariales ausentes.
+No se consultó SQL ni se ejecutaron herramientas de negocio.
+No se verificaron un token real de Entra, el proxy/Cloudflare ni la conexión
+real a Softland. La reconexión después del despliegue sigue pendiente.
+
+El main.py original incluye herramientas que crean PDFs e historial de
+cotizaciones. Se conservan; el servidor completo no es exclusivamente de lectura.
+Este paquete no contiene los módulos empresariales originales ni secretos.

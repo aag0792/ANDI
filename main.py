@@ -9,18 +9,17 @@ Endpoints:
 """
 import asyncio
 import contextlib
-import hmac
 from datetime import datetime
 from pathlib import Path
 
 import requests
 import uvicorn
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
+from urllib.parse import urlsplit
 from starlette.applications import Starlette
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import HTMLResponse, JSONResponse
+from starlette.responses import HTMLResponse, JSONResponse, FileResponse
 from starlette.routing import Mount, Route
-from starlette.staticfiles import StaticFiles
 
 try:
     from . import config, db
@@ -57,7 +56,15 @@ except ImportError:  # Ejecutado como `python main.py`
 
 VERSION = "0.1.0"
 
-mcp = FastMCP("ANDI Gateway", stateless_http=True, json_response=True)
+_public = urlsplit(config.PUBLIC_BASE_URL)
+mcp = FastMCP(
+    "ANDI Gateway", stateless_http=True, json_response=True,
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=[_public.netloc, "127.0.0.1:*", "localhost:*"],
+        allowed_origins=[config.PUBLIC_BASE_URL, "http://127.0.0.1:*", "http://localhost:*"],
+    ),
+)
 
 
 @mcp.tool()
@@ -257,19 +264,29 @@ async def generar_email_cotizacion(
     return build_email_for_quote(project_name, client_email, proposal_pdf_path)
 
 
-class BearerAuth(BaseHTTPMiddleware):
-    """Exige `Authorization: Bearer <GATEWAY_TOKEN>` en todo menos /health."""
+try:
+    from .auth_entra import EntraAuth
+except ImportError:
+    from auth_entra import EntraAuth
 
-    async def dispatch(self, request, call_next):
-        path = request.url.path
-        public_paths = {"/health", "/", "/condiciones-generales", "/terms"}
-        if path in public_paths or path.startswith("/assets"):
-            return await call_next(request)
-        header = request.headers.get("authorization", "")
-        token = header[7:] if header.lower().startswith("bearer ") else ""
-        if not hmac.compare_digest(token, config.GATEWAY_TOKEN):
-            return JSONResponse({"error": "no autorizado"}, status_code=401)
-        return await call_next(request)
+
+async def oauth_resource(_request):
+    return JSONResponse({
+        "resource": config.PUBLIC_BASE_URL + "/mcp",
+        "authorization_servers": [
+            f"https://login.microsoftonline.com/{config.ENTRA_TENANT_ID}/v2.0"
+        ],
+        "scopes_supported": [config.PUBLIC_BASE_URL + "/mcp/" + config.ENTRA_REQUIRED_SCOPE],
+        "bearer_methods_supported": ["header"],
+    })
+
+
+async def logo_asset(_request):
+    # Solo se publica el logo conocido, nunca la carpeta de código/configuración.
+    for candidate in (ROOT_DIR / "assets" / "Andi blanco.jpeg", ROOT_DIR / "Andi blanco.jpeg"):
+        if candidate.is_file():
+            return FileResponse(candidate, media_type="image/jpeg")
+    return JSONResponse({"error": "logo no encontrado"}, status_code=404)
 
 
 async def health(_request):
@@ -311,7 +328,7 @@ async def terms_page(_request):
     return HTMLResponse(term_html)
 
 
-CHAT_HTML = """
+CHAT_HTML = r"""
 <!doctype html>
 <html lang="es">
   <head>
@@ -445,7 +462,7 @@ CHAT_HTML = """
         }
 
         function append(text) {
-          chat.insertAdjacentHTML('beforeend', '<br><br>' + text);
+          chat.append(document.createTextNode('\n\n' + text));
           chat.scrollTop = chat.scrollHeight;
         }
 
@@ -679,6 +696,12 @@ async def assistant_chat(request):
     return JSONResponse(response)
 
 
+try:
+    from .softland_tools import register as register_softland_tools
+except ImportError:
+    from softland_tools import register as register_softland_tools
+register_softland_tools(mcp, db)
+
 mcp_app = mcp.streamable_http_app()  # debe crearse antes de usar mcp.session_manager
 ROOT_DIR = Path(__file__).resolve().parent
 
@@ -698,12 +721,15 @@ app = Starlette(
         Route("/api/chat", assistant_chat, methods=["GET", "POST"]),
         Route("/condiciones-generales", terms_page, methods=["GET"]),
         Route("/terms", terms_page, methods=["GET"]),
-        Mount("/assets", app=StaticFiles(directory=str(ROOT_DIR)), name="assets"),
-        Mount("/mcp", app=mcp_app),
+        Route("/assets/Andi blanco.jpeg", logo_asset, methods=["GET"]),
+        Route("/.well-known/oauth-protected-resource", oauth_resource, methods=["GET"]),
+        Route("/.well-known/oauth-protected-resource/mcp", oauth_resource, methods=["GET"]),
+        # FastMCP ya publica /mcp; montar en / evita /mcp/mcp.
+        Mount("/", app=mcp_app),
     ],
     lifespan=lifespan,
 )
-app.add_middleware(BearerAuth)
+app.add_middleware(EntraAuth)
 
 
 if __name__ == "__main__":

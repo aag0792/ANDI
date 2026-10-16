@@ -10,7 +10,7 @@ def register(mcp, db):
             db.audit(tool, params, None, False, type(exc).__name__)
             return {"error": "Error de consulta; revisar audit.log"}
         db.audit(tool, params, len(rows), True)
-        total = rows[0].get("_total_registros", 0) if rows else 0
+        total = rows[0].get("_total_registros", len(rows)) if rows else 0
         for row in rows:
             row.pop("_total_registros", None)
         return {"total": total, "devueltos": len(rows), "datos": rows}

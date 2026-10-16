@@ -30,7 +30,6 @@ sys.modules['db']=db
 agent=types.ModuleType('andi_agent')
 for n in ['build_client_selection_message','build_email_for_quote','build_project_schedule','estimate_project','generate_pdf_proposal','generate_quote','list_quote_history','parse_user_request','save_quote_history','summarize_meeting']:setattr(agent,n,lambda *a,**k:{})
 sys.modules['andi_agent']=agent
-soft=types.ModuleType('softland_tools');soft.register=lambda *a:None;sys.modules['softland_tools']=soft
 import main
 from starlette.testclient import TestClient
 with patch.object(auth_entra.PyJWKClient,'get_signing_key_from_jwt',lambda self,t:types.SimpleNamespace(key=key.public_key())):
@@ -45,6 +44,22 @@ with patch.object(auth_entra.PyJWKClient,'get_signing_key_from_jwt',lambda self,
   r=client.post('/mcp',headers=headers,json={'jsonrpc':'2.0','id':2,'method':'tools/list','params':{}})
   assert r.status_code==200,r.text
   tools=r.json()['result']['tools'];assert any(t['name']=='buscar_cliente' for t in tools)
+  expected = {'listar_clientes', 'listar_facturas', 'listar_pedidos', 'factura_lineas', 'pedido_lineas'}
+  assert expected.issubset({t['name'] for t in tools})
+  from jsonschema import Draft202012Validator
+  for tool in tools:
+   Draft202012Validator.check_schema(tool['inputSchema'])
+  # Parámetros inválidos prueban validación sin ejecutar procedimientos SQL.
+  for name,args in [('listar_clientes', {'pagina':0}), ('listar_facturas', {'desde':'fecha-invalida'}),
+                    ('listar_pedidos', {'tamano':201}), ('factura_lineas', {'tipo_documento':'', 'factura':''}),
+                    ('pedido_lineas', {'pedido':''})]:
+   result=client.post('/mcp',headers=headers,json={'jsonrpc':'2.0','id':3,'method':'tools/call',
+                     'params':{'name':name,'arguments':args}})
+   assert result.status_code==200,result.text
+   payload=result.json()['result']
+   assert not payload.get('isError'),result.text
+   data=payload.get('structuredContent') or json.loads(payload['content'][0]['text'])
+   assert 'error' in data,result.text
   assert client.get('/assets/config.py',headers=headers).status_code==404
   assert client.get('/assets/.env',headers=headers).status_code==404
 print('OK: firma, issuer, audience, tenant, expiración, scope, allowlist, tokens v1/v2, 401 sin token, initialize y tools/list en /mcp, assets protegidos. SQL no consultado. Herramientas principales:',len(tools))

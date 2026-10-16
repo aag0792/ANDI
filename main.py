@@ -696,6 +696,12 @@ async def assistant_chat(request):
     return JSONResponse(response)
 
 
+try:
+    from .softland_tools import register as register_softland_tools
+except ImportError:
+    from softland_tools import register as register_softland_tools
+register_softland_tools(mcp, db)
+
 mcp_app = mcp.streamable_http_app()  # debe crearse antes de usar mcp.session_manager
 ROOT_DIR = Path(__file__).resolve().parent
 

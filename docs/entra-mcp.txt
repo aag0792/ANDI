@@ -1,10 +1,10 @@
 ANDI: corrección de autenticación Entra y descubrimiento MCP
 
-Archivos: main.py, config.py, auth_entra.py.
+Archivos: main.py, config.py, auth_entra.py y softland_tools.py.
 1. Respaldar main.py y config.py originales en una carpeta FUERA de la carpeta
    pública del proyecto. No colocar .bak accesibles a través del servidor.
 2. Detener ANDI usando el mismo servicio o terminal que lo inicia normalmente.
-3. Copiar los tres .py de este paquete a la carpeta donde están main.py,
+3. Copiar los cuatro .py de este paquete a la carpeta donde están main.py,
    db.py, andi_agent.py y softland_tools.py. Reemplazar main.py y config.py.
    No cambiar los otros módulos ni las credenciales SQL.
 4. En el .env o conexion.env que ya utiliza ANDI, revisar/agregar estas líneas
@@ -61,3 +61,8 @@ real a Softland. La reconexión después del despliegue sigue pendiente.
 El main.py original incluye herramientas que crean PDFs e historial de
 cotizaciones. Se conservan; el servidor completo no es exclusivamente de lectura.
 Este paquete no contiene los módulos empresariales originales ni secretos.
+
+softland_tools.py registra listar_clientes, listar_facturas, listar_pedidos,
+factura_lineas y pedido_lineas. Requiere sus procedimientos andi.sp_*
+ya existentes en la base de datos; este cambio no crea objetos SQL.
+Verificación reproducible sin acceso SQL: python tools/verify_entra_mcp.py

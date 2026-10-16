@@ -10,6 +10,7 @@ Endpoints:
 import asyncio
 import contextlib
 import hmac
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -262,14 +263,48 @@ class BearerAuth(BaseHTTPMiddleware):
 
     async def dispatch(self, request, call_next):
         path = request.url.path
-        public_paths = {"/health", "/", "/condiciones-generales", "/terms"}
+        public_paths = {"/health", "/", "/condiciones-generales", "/terms", "/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"}
         if path in public_paths or path.startswith("/assets"):
             return await call_next(request)
         header = request.headers.get("authorization", "")
         token = header[7:] if header.lower().startswith("bearer ") else ""
-        if not hmac.compare_digest(token, config.GATEWAY_TOKEN):
-            return JSONResponse({"error": "no autorizado"}, status_code=401)
+        mode = os.getenv("GATEWAY_AUTH_MODE", "bearer").strip().lower()
+        if mode == "entra":
+            try:
+                if not token:
+                    raise ValueError("Token ausente")
+                try:
+                    from .entra_auth import validate_entra_token
+                except ImportError:
+                    from entra_auth import validate_entra_token
+                validate_entra_token(token)
+            except Exception:
+                return JSONResponse(
+                    {"error": "no autorizado"},
+                    status_code=401,
+                    headers={"WWW-Authenticate": 'Bearer resource_metadata="' + os.getenv("PUBLIC_BASE_URL", "").rstrip("/") + '/.well-known/oauth-protected-resource/mcp"'},
+                )
+        elif mode == "bearer":
+            if not hmac.compare_digest(token, config.GATEWAY_TOKEN):
+                return JSONResponse({"error": "no autorizado"}, status_code=401)
+        else:
+            return JSONResponse({"error": "modo de autenticacion invalido"}, status_code=503)
         return await call_next(request)
+
+
+async def protected_resource_metadata(_request):
+    base = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
+    tenant = os.getenv("ENTRA_TENANT_ID", "")
+    if not base or not tenant:
+        return JSONResponse({"error": "OAuth no configurado"}, status_code=503)
+    return JSONResponse({
+        "resource": base + "/mcp",
+        "authorization_servers": [
+            "https://login.microsoftonline.com/" + tenant + "/v2.0"
+        ],
+        "scopes_supported": [os.getenv("ENTRA_REQUIRED_SCOPE", "access_as_user")],
+        "bearer_methods_supported": ["header"],
+    })
 
 
 async def health(_request):
@@ -698,6 +733,8 @@ async def lifespan(_app):
 app = Starlette(
     routes=[
         Route("/health", health, methods=["GET"]),
+        Route("/.well-known/oauth-protected-resource/mcp", protected_resource_metadata, methods=["GET"]),
+        Route("/.well-known/oauth-protected-resource", protected_resource_metadata, methods=["GET"]),
         Route("/", chat_home, methods=["GET"]),
         Route("/chat", chat_home, methods=["GET"]),
         Route("/assistant/chat", assistant_chat, methods=["GET", "POST"]),

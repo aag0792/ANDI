@@ -20,3 +20,6 @@
 
 ## Caso de aceptación
 Para Agribio: buscar clientes cuyo correo de facturación sea `recepcionfacturas2@agribiocr.com`; revisar facturas emitidas entre 2026-09-16 y 2026-10-16; recuperar pedidos históricos del cliente y sus líneas.
+
+## Exclusiones de columnas (confirmado)
+En todas las respuestas de `CLIENTE`, `FACTURA`, `FACTURA_LINEA`, `PEDIDO` y `PEDIDO_LINEA`, excluir `ROWPOINTER`, `CREATED_DATE`, `RECORDATE` y variantes de esos identificadores sin distinguir mayúsculas/minúsculas. Filtrar la proyección del SELECT o la serialización, sin alterar las tablas originales. Conservar columnas de negocio y fechas de documentos necesarias para filtrar los últimos dos años.
